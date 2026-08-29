@@ -7,12 +7,17 @@ app.use(express.json());
 
 const sessions = new Map();
 
-// Pull settings securely from Render environment variables
-const domain = process.env.SHOPIFY_DOMAIN;
+const domain = process.env.SHOPIFY_DOMAIN || "1s2r4k-tt.myshopify.com";
 const clientId = process.env.SHOPIFY_CLIENT_ID;
 const clientSecret = process.env.SHOPIFY_CLIENT_SECRET;
 
+// 1. Browser Health Check Route
 app.get('/', (req, res) => {
+  res.status(200).send("Shopify MCP Server is online and working!");
+});
+
+// 2. SSE Connection Endpoint for Claude
+const handleSse = (req, res) => {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
@@ -28,8 +33,11 @@ app.get('/', (req, res) => {
   req.on('close', () => {
     sessions.delete(sessionId);
   });
-});
+};
 
+app.get('/sse', handleSse);
+
+// 3. Message endpoint for MCP requests
 app.post('/message', async (req, res) => {
   const sessionId = req.query.sessionId;
   const client = sessions.get(sessionId);
