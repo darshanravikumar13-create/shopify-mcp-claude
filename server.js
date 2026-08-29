@@ -11,17 +11,13 @@ const domain = process.env.SHOPIFY_DOMAIN || "1s2r4k-tt.myshopify.com";
 const clientId = process.env.SHOPIFY_CLIENT_ID;
 const clientSecret = process.env.SHOPIFY_CLIENT_SECRET;
 
-// 1. Browser Health Check Route
-app.get('/', (req, res) => {
-  res.status(200).send("Shopify MCP Server is online and working!");
-});
-
-// 2. SSE Connection Endpoint for Claude
+// Handle SSE connections on both root / and /sse
 const handleSse = (req, res) => {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
-    'Connection': 'keep-alive'
+    'Connection': 'keep-alive',
+    'Access-Control-Allow-Origin': '*'
   });
 
   const sessionId = Date.now().toString();
@@ -35,9 +31,10 @@ const handleSse = (req, res) => {
   });
 };
 
+app.get('/', handleSse);
 app.get('/sse', handleSse);
 
-// 3. Message endpoint for MCP requests
+// Message handler for MCP tool execution
 app.post('/message', async (req, res) => {
   const sessionId = req.query.sessionId;
   const client = sessions.get(sessionId);
