@@ -7,11 +7,13 @@ app.use(express.json());
 
 const sessions = new Map();
 
-const domain = process.env.SHOPIFY_DOMAIN || "1s2r4k-tt.myshopify.com";
-const clientId = process.env.SHOPIFY_CLIENT_ID;
+// Hardcoded Domain & Client ID (Non-sensitive)
+const domain = "1s2r4k-tt.myshopify.com";
+const clientId = "cdf6d98c8611f9b990097bb60195295f";
+
+// Secret pulled securely from Render Environment Variables
 const clientSecret = process.env.SHOPIFY_CLIENT_SECRET;
 
-// Handle SSE connections on both root / and /sse
 const handleSse = (req, res) => {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
@@ -34,7 +36,6 @@ const handleSse = (req, res) => {
 app.get('/', handleSse);
 app.get('/sse', handleSse);
 
-// Message handler for MCP tool execution
 app.post('/message', async (req, res) => {
   const sessionId = req.query.sessionId;
   const client = sessions.get(sessionId);
@@ -59,11 +60,11 @@ app.post('/message', async (req, res) => {
       responsePayload.result = {
         tools: [{
           name: "shopify_graphql",
-          description: "Execute GraphQL queries on Shopify",
+          description: "Execute GraphQL queries on Shopify Admin API",
           inputSchema: { 
             type: "object", 
             properties: { 
-              query: { type: "string", description: "GraphQL query to run against Shopify Admin API" } 
+              query: { type: "string", description: "GraphQL query string" } 
             }, 
             required: ["query"] 
           }
