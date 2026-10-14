@@ -15,7 +15,15 @@ app.set("trust proxy", 1);
 app.use(cors());
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: false }));
+app.use((req, res, next) => {
+  console.log(`[REQUEST] ${req.method} ${req.path}`);
 
+  res.on("finish", () => {
+    console.log(`[RESPONSE] ${req.method} ${req.path} ${res.statusCode}`);
+  });
+
+  next();
+});
 const SHOP = "1s2r4k-tt.myshopify.com";
 const SHOPIFY_CLIENT_ID = "cdf6d98c8611f9b990097bb60195295f";
 
