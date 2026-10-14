@@ -469,6 +469,61 @@ app.post("/mcp", authenticate, async (req, res) => {
     }
   );
 
+  server.tool(
+    "get_return_declined_template",
+    "Read the current Return request declined Shopify email template from the open browser editor.",
+    {},
+    async () => {
+      try {
+        const result = await browserAgentRequest("/template");
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify(result, null, 2)
+          }]
+        };
+      } catch (error) {
+        return {
+          isError: true,
+          content: [{
+            type: "text",
+            text: error.message || "Could not read the email template."
+          }]
+        };
+      }
+    }
+  );
+
+  server.tool(
+    "edit_return_declined_template",
+    "Replace the Return request declined template code in Shopify's open editor. This does not click Shopify's final Save or Submit button.",
+    {
+      code: z.string().min(1).max(100000)
+    },
+    async ({ code }) => {
+      try {
+        const result = await browserAgentRequest("/template", {
+          method: "PUT",
+          body: JSON.stringify({ code })
+        });
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify(result, null, 2)
+          }]
+        };
+      } catch (error) {
+        return {
+          isError: true,
+          content: [{
+            type: "text",
+            text: error.message || "Could not edit the email template."
+          }]
+        };
+      }
+    }
+  );
+
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: undefined
   });
