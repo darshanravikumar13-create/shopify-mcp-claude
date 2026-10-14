@@ -400,6 +400,38 @@ async function shopifyGraphQL(query, variables = {}) {
   return data;
 }
 
+async function browserAgentRequest(path, options = {}) {
+  const baseUrl = process.env.BROWSER_AGENT_URL;
+  const token = process.env.BROWSER_AGENT_TOKEN;
+
+  if (!baseUrl || !token) {
+    throw new Error(
+      "BROWSER_AGENT_URL or BROWSER_AGENT_TOKEN is missing in Render."
+    );
+  }
+
+  const response = await fetch(
+    `${baseUrl.replace(/\/+$/, "")}${path}`,
+    {
+      ...options,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        ...options.headers
+      },
+      signal: AbortSignal.timeout(30000)
+    }
+  );
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(data.error || `Browser agent returned HTTP ${response.status}`);
+  }
+
+  return data;
+}
+
 // MCP endpoint: Streamable HTTP
 app.post("/mcp", authenticate, async (req, res) => {
   const server = new McpServer({
