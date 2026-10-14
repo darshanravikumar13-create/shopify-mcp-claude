@@ -1,12 +1,14 @@
+
 {
   "name": "shopify-mcp-server",
-  "version": "1.0.0",
-  "description": "Custom lightweight MCP SSE server for Shopify",
+  "version": "1.1.0",
+  "description": "Shopify MCP server for Gemini",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
     "cors": "^2.8.5",
     "express": "^4.21.2"
   },
