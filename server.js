@@ -469,9 +469,75 @@ app.post("/mcp", authenticate, async (req, res) => {
     }
   );
 
+  
+  server.tool(
+    "get_shopify_email_template",
+    "Read a Shopify notification email template from its open Edit code page in Opera. Supply the template slug from the Shopify editor URL.",
+    {
+      template: z.string()
+        .regex(/^[a-z0-9_]+$/)
+        .default("return_declined")
+    },
+    async ({ template }) => {
+      try {
+        const result = await browserAgentRequest(
+          `/template?template=${encodeURIComponent(template)}`
+        );
+
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify(result, null, 2)
+          }]
+        };
+      } catch (error) {
+        return {
+          isError: true,
+          content: [{
+            type: "text",
+            text: error.message || "Could not read the email template."
+          }]
+        };
+      }
+    }
+  );
+
+  server.tool(
+    "edit_shopify_email_template",
+    "Replace the code in an open Shopify notification email editor. Requires the template slug from its URL and the complete replacement code. Does not save changes to Shopify.",
+    {
+      template: z.string().regex(/^[a-z0-9_]+$/),
+      code: z.string().min(1).max(100000)
+    },
+    async ({ template, code }) => {
+      try {
+        const result = await browserAgentRequest("/template", {
+          method: "PUT",
+          body: JSON.stringify({ template, code })
+        });
+
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify(result, null, 2)
+          }]
+        };
+      } catch (error) {
+        return {
+          isError: true,
+          content: [{
+            type: "text",
+            text: error.message || "Could not edit the email template."
+          }]
+        };
+      }
+    }
+  );
+
+  // Backwards-compatible tool for your existing workflow.
   server.tool(
     "get_return_declined_template",
-    "Read the current Return request declined Shopify email template from the open browser editor.",
+    "Read the Return request declined email template.",
     {},
     async () => {
       try {
@@ -496,7 +562,7 @@ app.post("/mcp", authenticate, async (req, res) => {
 
   server.tool(
     "edit_return_declined_template",
-    "Replace the Return request declined template code in Shopify's open editor. This does not click Shopify's final Save or Submit button.",
+    "Replace the Return request declined template code. Does not save changes to Shopify.",
     {
       code: z.string().min(1).max(100000)
     },
@@ -506,6 +572,7 @@ app.post("/mcp", authenticate, async (req, res) => {
           method: "PUT",
           body: JSON.stringify({ code })
         });
+
         return {
           content: [{
             type: "text",
