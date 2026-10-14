@@ -4,6 +4,7 @@ const cors = require('cors');
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use(express.urlencoded({ extended: true })); // Required to parse form-encoded OAuth requests
 
 const sessions = new Map();
 
@@ -14,6 +15,16 @@ const clientId = "cdf6d98c8611f9b990097bb60195295f";
 // Secret pulled securely from Render Environment Variables
 const clientSecret = process.env.SHOPIFY_CLIENT_SECRET;
 
+// 1. OAuth Token Endpoint (Satisfies Gemini's connection handshake)
+app.post(['/oauth/token', '/token'], (req, res) => {
+  res.json({
+    access_token: "mcp_session_token_" + Date.now(),
+    token_type: "Bearer",
+    expires_in: 3600
+  });
+});
+
+// 2. SSE Transport Handlers
 const handleSse = (req, res) => {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
@@ -36,6 +47,7 @@ const handleSse = (req, res) => {
 app.get('/', handleSse);
 app.get('/sse', handleSse);
 
+// 3. JSON-RPC Message Handler & Shopify Tool Execution
 app.post('/message', async (req, res) => {
   const sessionId = req.query.sessionId;
   const client = sessions.get(sessionId);
