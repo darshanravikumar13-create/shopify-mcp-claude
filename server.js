@@ -2,8 +2,12 @@
 const express = require("express");
 const cors = require("cors");
 const crypto = require("crypto");
-const { McpServer } = require("@modelcontextprotocol/sdk/server/mcp.js");
-const { StreamableHTTPServerTransport } = require("@modelcontextprotocol/sdk/server/streamableHttp.js");
+const {
+  McpServer
+} = require("@modelcontextprotocol/sdk/server/mcp.js");
+const {
+  StreamableHTTPServerTransport
+} = require("@modelcontextprotocol/sdk/server/streamableHttp.js");
 const { z } = require("zod");
 
 const app = express();
@@ -16,17 +20,16 @@ const SHOP = "1s2r4k-tt.myshopify.com";
 const SHOPIFY_CLIENT_ID = "cdf6d98c8611f9b990097bb60195295f";
 
 const SHOPIFY_CLIENT_SECRET = process.env.SHOPIFY_CLIENT_SECRET;
-const MCP_CLIENT_ID = process.env.MCP_CLIENT_ID;
-const MCP_CLIENT_SECRET = process.env.MCP_CLIENT_SECRET;
-const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL;
+const PUBLIC_BASE_URL =
+  (process.env.PUBLIC_BASE_URL ||
+    "https://shopify-mcp-claude.onrender.com").replace(/\/+$/, "");
 
-const authorizationCodes = new Map();
-const accessTokens = new Map();
+const RESOURCE = `${PUBLIC_BASE_URL}/mcp`;
 
-function baseUrl(req) {
-  return (PUBLIC_BASE_URL || `${req.protocol}://${req.get("host")}`)
-    .replace(/\/+$/, "");
-}
+// In-memory OAuth state. A server restart clears active authorizations.
+const clients = new Map();
+const codes = new Map();
+const tokens = new Map();
 
 function randomToken() {
   return crypto.randomBytes(32).toString("base64url");
@@ -39,92 +42,123 @@ function safeEqual(a, b) {
   return x.length === y.length && crypto.timingSafeEqual(x, y);
 }
 
-function getCredentials(req) {
-  const header = req.get("authorization") || "";
-
-  if (header.startsWith("Basic ")) {
-    try {
-      const decoded = Buffer.from(header.slice(6), "base64").toString();
-      const index = decoded.indexOf(":");
-
-      if (index >= 0) {
-        return {
-          id: decodeURIComponent(decoded.slice(0, index)),
-          secret: decodeURIComponent(decoded.slice(index + 1))
-        };
-      }
-    } catch (_) {}
-  }
-
-  return {
-    id: req.body?.client_id,
-    secret: req.body?.client_secret
-  };
-}
-
-function validClient(req) {
-  const credentials = getCredentials(req);
-
-  return safeEqual(credentials.id, MCP_CLIENT_ID) &&
-    safeEqual(credentials.secret, MCP_CLIENT_SECRET);
-}
-
 function validRedirect(uri) {
   try {
-    return new URL(uri).protocol === "https:";
-  } catch (_) {
+    const u = new URL(uri);
+    return (
+      u.protocol === "https:" ||
+      (u.protocol === "http:" &&
+        ["localhost", "127.0.0.1", "[::1]"].includes(u.hostname))
+    );
+  } catch {
     return false;
   }
 }
 
-function escapeHtml(value = "") {
-  return String(value).replace(/[&<>"']/g, char => ({
+function htmlEscape(value = "") {
+  return String(value).replace(/[&<>"']/g, c => ({
     "&": "&amp;",
     "<": "&lt;",
     ">": "&gt;",
     '"': "&quot;",
     "'": "&#39;"
-  })[char]);
+  })[c]);
 }
 
-function protectedResource(req) {
-  const base = baseUrl(req);
+function getClientCredentials(req) {
+  const header = req.get("authorization") || "";
+
+  if (header.startsWith("Basic ")) {
+    try {
+      const decoded = Buffer.from(header.slice(6), "base64").toString();
+      const i = decoded.indexOf(":");
+
+      if (i >= 0) {
+        return {
+          clientId: decodeURIComponent(decoded.slice(0, i)),
+          clientSecret: decodeURIComponent(decoded.slice(i + 1))
+        };
+      }
+    } catch {}
+  }
 
   return {
-    resource: `${base}/mcp`,
-    authorization_servers: [base],
+    clientId: req.body?.client_id,
+    clientSecret: req.body?.client_secret
+  };
+}
+
+// OAuth authorization-server metadata
+app.get("/.well-known/oauth-authorization-server", (req, res) => {
+  res.json({
+    issuer: PUBLIC_BASE_URL,
+    authorization_endpoint: `${PUBLIC_BASE_URL}/oauth/authorize`,
+    token_endpoint: `${PUBLIC_BASE_URL}/oauth/token`,
+    registration_endpoint: `${PUBLIC_BASE_URL}/register`,
+    response_types_supported: ["code"],
+    grant_types_supported: ["authorization_code"],
+    code_challenge_methods_supported: ["S256"],
+    token_endpoint_auth_methods_supported: ["none"],
+    scopes_supported: ["shopify"]
+  });
+});
+
+// MCP protected-resource metadata
+function resourceMetadata() {
+  return {
+    resource: RESOURCE,
+    authorization_servers: [PUBLIC_BASE_URL],
     bearer_methods_supported: ["header"],
     scopes_supported: ["shopify"]
   };
 }
 
 app.get("/.well-known/oauth-protected-resource", (req, res) => {
-  res.json(protectedResource(req));
+  res.json(resourceMetadata());
 });
 
 app.get("/.well-known/oauth-protected-resource/mcp", (req, res) => {
-  res.json(protectedResource(req));
+  res.json(resourceMetadata());
 });
 
-app.get("/.well-known/oauth-authorization-server", (req, res) => {
-  const base = baseUrl(req);
+// Dynamic Client Registration (public OAuth clients using PKCE)
+app.post("/register", (req, res) => {
+  const body = req.body || {};
+  const redirectUris = body.redirect_uris;
 
-  res.json({
-    issuer: base,
-    authorization_endpoint: `${base}/oauth/authorize`,
-    token_endpoint: `${base}/oauth/token`,
-    response_types_supported: ["code"],
-    grant_types_supported: ["authorization_code"],
-    code_challenge_methods_supported: ["S256"],
-    token_endpoint_auth_methods_supported: [
-      "client_secret_post",
-      "client_secret_basic"
-    ],
-    scopes_supported: ["shopify"]
+  if (
+    !Array.isArray(redirectUris) ||
+    redirectUris.length === 0 ||
+    redirectUris.length > 20 ||
+    !redirectUris.every(uri =>
+      typeof uri === "string" && validRedirect(uri)
+    )
+  ) {
+    return res.status(400).json({
+      error: "invalid_redirect_uri",
+      error_description: "Provide valid HTTPS or loopback redirect URIs."
+    });
+  }
+
+  const clientId = randomToken();
+
+  clients.set(clientId, {
+    redirectUris,
+    name: String(body.client_name || "MCP client").slice(0, 100),
+    created: Date.now()
+  });
+
+  res.status(201).json({
+    client_id: clientId,
+    client_name: String(body.client_name || "MCP client").slice(0, 100),
+    redirect_uris: redirectUris,
+    grant_types: ["authorization_code"],
+    response_types: ["code"],
+    token_endpoint_auth_method: "none"
   });
 });
 
-// OAuth authorization page
+// Authorization: show a consent page
 app.get("/oauth/authorize", (req, res) => {
   const {
     response_type,
@@ -132,38 +166,42 @@ app.get("/oauth/authorize", (req, res) => {
     redirect_uri,
     state,
     code_challenge,
-    code_challenge_method
+    code_challenge_method,
+    resource
   } = req.query;
+
+  const client = clients.get(client_id);
 
   if (
     response_type !== "code" ||
-    !safeEqual(client_id, MCP_CLIENT_ID) ||
-    !validRedirect(redirect_uri) ||
+    !client ||
+    !client.redirectUris.includes(redirect_uri) ||
     typeof state !== "string" ||
     !state ||
     typeof code_challenge !== "string" ||
-    !code_challenge ||
-    code_challenge_method !== "S256"
+    !/^[A-Za-z0-9_-]{43}$/.test(code_challenge) ||
+    code_challenge_method !== "S256" ||
+    (resource && resource !== RESOURCE)
   ) {
-    return res.status(400).send("Invalid OAuth request.");
+    return res.status(400).send("Invalid OAuth authorization request.");
   }
 
   res.type("html").send(`<!doctype html>
 <html>
-<head><meta charset="utf-8"><title>Shopify authorization</title></head>
-<body style="font-family:Arial;max-width:520px;margin:60px auto;padding:20px">
+<head><meta charset="utf-8"><title>Shopify connection</title></head>
+<body style="font-family:Arial;max-width:560px;margin:50px auto;padding:20px">
 <h2>Connect Gemini to Shopify</h2>
-<p>This connection can run Shopify Admin GraphQL queries and mutations
-permitted by your Shopify app's access scopes.</p>
-<p>Mutations may change or delete store data. Only approve if you trust
-the Gemini connection.</p>
+<p>You're authorizing an MCP client to access your Shopify store.</p>
+<p>This connection can read or modify store data within your Shopify API permissions.
+Changes to products, prices, inventory and orders may have lasting effects.</p>
 <form method="POST" action="/oauth/authorize">
-<input type="hidden" name="client_id" value="${escapeHtml(client_id)}">
-<input type="hidden" name="redirect_uri" value="${escapeHtml(redirect_uri)}">
-<input type="hidden" name="state" value="${escapeHtml(state)}">
-<input type="hidden" name="code_challenge" value="${escapeHtml(code_challenge)}">
+<input type="hidden" name="client_id" value="${htmlEscape(client_id)}">
+<input type="hidden" name="redirect_uri" value="${htmlEscape(redirect_uri)}">
+<input type="hidden" name="state" value="${htmlEscape(state)}">
+<input type="hidden" name="code_challenge" value="${htmlEscape(code_challenge)}">
 <input type="hidden" name="code_challenge_method" value="S256">
-<button type="submit" style="padding:12px 20px">Approve connection</button>
+<input type="hidden" name="resource" value="${htmlEscape(resource || RESOURCE)}">
+<button type="submit" style="padding:12px 18px">Approve connection</button>
 </form>
 </body></html>`);
 });
@@ -174,27 +212,32 @@ app.post("/oauth/authorize", (req, res) => {
     redirect_uri,
     state,
     code_challenge,
-    code_challenge_method
+    code_challenge_method,
+    resource
   } = req.body;
 
+  const client = clients.get(client_id);
+
   if (
-    !safeEqual(client_id, MCP_CLIENT_ID) ||
-    !validRedirect(redirect_uri) ||
+    !client ||
+    !client.redirectUris.includes(redirect_uri) ||
     typeof state !== "string" ||
     !state ||
     typeof code_challenge !== "string" ||
-    !code_challenge ||
-    code_challenge_method !== "S256"
+    !/^[A-Za-z0-9_-]{43}$/.test(code_challenge) ||
+    code_challenge_method !== "S256" ||
+    (resource && resource !== RESOURCE)
   ) {
-    return res.status(400).send("Invalid authorization request.");
+    return res.status(400).send("Invalid OAuth authorization request.");
   }
 
   const code = randomToken();
 
-  authorizationCodes.set(code, {
+  codes.set(code, {
     clientId: client_id,
     redirectUri: redirect_uri,
     challenge: code_challenge,
+    resource: resource || RESOURCE,
     expires: Date.now() + 5 * 60 * 1000
   });
 
@@ -205,15 +248,18 @@ app.post("/oauth/authorize", (req, res) => {
   res.redirect(302, callback.toString());
 });
 
-// OAuth token endpoint
+// Exchange authorization code for an access token
 app.post("/oauth/token", (req, res) => {
   res.set("Cache-Control", "no-store");
+  res.set("Pragma", "no-cache");
 
-  if (!MCP_CLIENT_ID || !MCP_CLIENT_SECRET || !validClient(req)) {
-    return res.status(401).json({ error: "invalid_client" });
-  }
-
-  const { grant_type, code, redirect_uri, code_verifier } = req.body;
+  const {
+    grant_type,
+    code,
+    redirect_uri,
+    code_verifier,
+    resource
+  } = req.body || {};
 
   if (grant_type !== "authorization_code") {
     return res.status(400).json({
@@ -221,55 +267,70 @@ app.post("/oauth/token", (req, res) => {
     });
   }
 
-  const record = authorizationCodes.get(code);
-
-  if (!record) {
-    return res.status(400).json({ error: "invalid_grant" });
-  }
-
-  authorizationCodes.delete(code);
+  const credentials = getClientCredentials(req);
+  const clientId = credentials.clientId;
+  const client = clients.get(clientId);
+  const record = codes.get(code);
 
   if (
-    record.expires < Date.now() ||
-    record.clientId !== MCP_CLIENT_ID ||
+    !client ||
+    credentials.clientSecret ||
+    !record ||
+    record.clientId !== clientId ||
     record.redirectUri !== redirect_uri ||
-    typeof code_verifier !== "string"
+    record.expires < Date.now() ||
+    (resource && resource !== record.resource) ||
+    typeof code_verifier !== "string" ||
+    code_verifier.length < 43 ||
+    code_verifier.length > 128
   ) {
+    if (code) codes.delete(code);
     return res.status(400).json({ error: "invalid_grant" });
   }
+
+  codes.delete(code);
 
   const challenge = crypto
     .createHash("sha256")
     .update(code_verifier)
     .digest("base64url");
 
-  if (challenge !== record.challenge) {
+  if (!safeEqual(challenge, record.challenge)) {
     return res.status(400).json({ error: "invalid_grant" });
   }
 
-  const token = randomToken();
-  accessTokens.set(token, Date.now() + 60 * 60 * 1000);
+  const accessToken = randomToken();
 
-  return res.json({
-    access_token: token,
+  tokens.set(accessToken, {
+    clientId,
+    resource: record.resource,
+    expires: Date.now() + 60 * 60 * 1000
+  });
+
+  res.json({
+    access_token: accessToken,
     token_type: "Bearer",
     expires_in: 3600,
     scope: "shopify"
   });
 });
 
-function requireBearer(req, res, next) {
+function authenticate(req, res, next) {
   const header = req.get("authorization") || "";
   const match = header.match(/^Bearer\s+(.+)$/i);
   const token = match?.[1];
-  const expires = token && accessTokens.get(token);
+  const record = token && tokens.get(token);
 
-  if (!expires || expires < Date.now()) {
-    if (token) accessTokens.delete(token);
+  if (
+    !record ||
+    record.expires <= Date.now() ||
+    record.resource !== RESOURCE
+  ) {
+    if (token) tokens.delete(token);
 
     res.set(
       "WWW-Authenticate",
-      `Bearer resource_metadata="${baseUrl(req)}/.well-known/oauth-protected-resource"`
+      `Bearer resource_metadata="${PUBLIC_BASE_URL}/.well-known/oauth-protected-resource"`
     );
 
     return res.status(401).json({ error: "unauthorized" });
@@ -278,13 +339,14 @@ function requireBearer(req, res, next) {
   next();
 }
 
-// Shopify Admin GraphQL: queries AND mutations
-async function runShopifyGraphQL(query, variables) {
+// Get a Shopify Admin API access token and execute GraphQL.
+// Shopify's own app configuration and scopes still determine access.
+async function shopifyGraphQL(query, variables = {}) {
   if (!SHOPIFY_CLIENT_SECRET) {
-    throw new Error("SHOPIFY_CLIENT_SECRET is not configured.");
+    throw new Error("SHOPIFY_CLIENT_SECRET is missing in Render.");
   }
 
-  const tokenResponse = await fetch(
+  const authResponse = await fetch(
     `https://${SHOP}/admin/oauth/access_token`,
     {
       method: "POST",
@@ -297,58 +359,63 @@ async function runShopifyGraphQL(query, variables) {
     }
   );
 
-  const tokenData = await tokenResponse.json();
+  const authData = await authResponse.json();
 
-  if (!tokenResponse.ok || !tokenData.access_token) {
-    console.error("Shopify token request failed:", tokenResponse.status);
-    throw new Error("Shopify authentication failed. Check Render logs.");
+  if (!authResponse.ok || !authData.access_token) {
+    console.error("Shopify authentication failed:", authResponse.status);
+    throw new Error(
+      "Shopify authentication failed. Check app setup and Render logs."
+    );
   }
 
-  const response = await fetch(
+  const apiResponse = await fetch(
     `https://${SHOP}/admin/api/2026-10/graphql.json`,
     {
       method: "POST",
       headers: {
-        "X-Shopify-Access-Token": tokenData.access_token,
+        "X-Shopify-Access-Token": authData.access_token,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({ query, variables })
     }
   );
 
-  const data = await response.json();
+  const data = await apiResponse.json();
 
-  if (!response.ok) {
-    console.error("Shopify GraphQL request failed:", response.status);
-    throw new Error("Shopify API request failed. Check Render logs.");
+  if (!apiResponse.ok) {
+    console.error("Shopify API returned:", apiResponse.status);
+    throw new Error(
+      "Shopify API request failed. Check API version, scopes and logs."
+    );
   }
 
   return data;
 }
 
-app.post("/mcp", requireBearer, async (req, res) => {
+// MCP endpoint: Streamable HTTP
+app.post("/mcp", authenticate, async (req, res) => {
   const server = new McpServer({
     name: "onyx-oak-shopify",
-    version: "1.2.0"
+    version: "1.3.0"
   });
 
   server.tool(
     "shopify_graphql",
-    "Execute Shopify Admin GraphQL queries or mutations. Supports reading and changing store data allowed by the Shopify app's API scopes. Mutations can have irreversible effects; verify important changes.",
+    "Execute Shopify Admin GraphQL queries or mutations. Can read and modify store data permitted by the Shopify app's granted API scopes. Mutations may have lasting effects.",
     {
       query: z.string().min(1).max(20000),
       variables: z.record(z.string(), z.unknown()).optional()
     },
     async ({ query, variables }) => {
       try {
-        const data = await runShopifyGraphQL(query, variables || {});
+        const result = await shopifyGraphQL(query, variables || {});
 
         return {
           content: [{
             type: "text",
-            text: JSON.stringify(data, null, 2)
+            text: JSON.stringify(result, null, 2)
           }],
-          ...(data.errors ? { isError: true } : {})
+          ...(result.errors ? { isError: true } : {})
         };
       } catch (error) {
         return {
@@ -363,8 +430,7 @@ app.post("/mcp", requireBearer, async (req, res) => {
   );
 
   const transport = new StreamableHTTPServerTransport({
-    sessionIdGenerator: undefined,
-    enableJsonResponse: true
+    sessionIdGenerator: undefined
   });
 
   try {
@@ -377,8 +443,13 @@ app.post("/mcp", requireBearer, async (req, res) => {
       res.status(500).json({ error: "MCP request failed." });
     }
   } finally {
-    await transport.close().catch(() => {});
-    await server.close().catch(() => {});
+    try {
+      await transport.close();
+    } catch {}
+
+    try {
+      await server.close();
+    } catch {}
   }
 });
 
