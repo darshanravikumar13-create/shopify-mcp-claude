@@ -461,10 +461,20 @@ app.post("/mcp", authenticate, async (req, res) => {
   }
 });
 
+
+app.head("/mcp", (req, res) => {
+  res.set(
+    "WWW-Authenticate",
+    `Bearer resource_metadata="${PUBLIC_BASE_URL}/.well-known/oauth-protected-resource/mcp"`
+  );
+  res.status(401).end();
+});
+
 app.get("/mcp", (req, res) => {
   res.set("Allow", "POST");
   res.status(405).send("Use POST for MCP requests.");
 });
+
 
 app.get("/", (req, res) => {
   res.type("text").send("Onyx & Oak Shopify MCP server is running.");
