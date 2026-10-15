@@ -11,30 +11,38 @@ const {
 const { z } = require("zod");
 
 const app = express();
+
 app.set("trust proxy", 1);
 app.use(cors());
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: false }));
+
 app.use((req, res, next) => {
   console.log(`[REQUEST] ${req.method} ${req.path}`);
 
   res.on("finish", () => {
-    console.log(`[RESPONSE] ${req.method} ${req.path} ${res.statusCode}`);
+    console.log(
+      `[RESPONSE] ${req.method} ${req.path} ${res.statusCode}`
+    );
   });
 
   next();
 });
-const SHOP = "1s2r4k-tt.myshopify.com";
-const SHOPIFY_CLIENT_ID = "cdf6d98c8611f9b990097bb60195295f";
 
-const SHOPIFY_CLIENT_SECRET = process.env.SHOPIFY_CLIENT_SECRET;
-const PUBLIC_BASE_URL =
-  (process.env.PUBLIC_BASE_URL ||
-    "https://shopify-mcp-claude.onrender.com").replace(/\/+$/, "");
+const SHOP = "1s2r4k-tt.myshopify.com";
+const SHOPIFY_CLIENT_ID =
+  "cdf6d98c8611f9b990097bb60195295f";
+
+const SHOPIFY_CLIENT_SECRET =
+  process.env.SHOPIFY_CLIENT_SECRET;
+
+const PUBLIC_BASE_URL = (
+  process.env.PUBLIC_BASE_URL ||
+  "https://shopify-mcp-claude.onrender.com"
+).replace(/\/+$/, "");
 
 const RESOURCE = `${PUBLIC_BASE_URL}/mcp`;
 
-// In-memory OAuth state. A server restart clears active authorizations.
 const clients = new Map();
 const codes = new Map();
 const tokens = new Map();
@@ -44,19 +52,31 @@ function randomToken() {
 }
 
 function safeEqual(a, b) {
-  if (typeof a !== "string" || typeof b !== "string") return false;
+  if (typeof a !== "string" || typeof b !== "string") {
+    return false;
+  }
+
   const x = Buffer.from(a);
   const y = Buffer.from(b);
-  return x.length === y.length && crypto.timingSafeEqual(x, y);
+
+  return (
+    x.length === y.length &&
+    crypto.timingSafeEqual(x, y)
+  );
 }
 
 function validRedirect(uri) {
   try {
     const u = new URL(uri);
+
     return (
       u.protocol === "https:" ||
-      (u.protocol === "http:" &&
-        ["localhost", "127.0.0.1", "[::1]"].includes(u.hostname))
+      (
+        u.protocol === "http:" &&
+        ["localhost", "127.0.0.1", "[::1]"].includes(
+          u.hostname
+        )
+      )
     );
   } catch {
     return false;
@@ -78,7 +98,11 @@ function getClientCredentials(req) {
 
   if (header.startsWith("Basic ")) {
     try {
-      const decoded = Buffer.from(header.slice(6), "base64").toString();
+      const decoded = Buffer.from(
+        header.slice(6),
+        "base64"
+      ).toString();
+
       const i = decoded.indexOf(":");
 
       if (i >= 0) {
@@ -96,22 +120,26 @@ function getClientCredentials(req) {
   };
 }
 
-// OAuth authorization-server metadata
-app.get("/.well-known/oauth-authorization-server", (req, res) => {
-  res.json({
-    issuer: PUBLIC_BASE_URL,
-    authorization_endpoint: `${PUBLIC_BASE_URL}/oauth/authorize`,
-    token_endpoint: `${PUBLIC_BASE_URL}/oauth/token`,
-    registration_endpoint: `${PUBLIC_BASE_URL}/register`,
-    response_types_supported: ["code"],
-    grant_types_supported: ["authorization_code"],
-    code_challenge_methods_supported: ["S256"],
-    token_endpoint_auth_methods_supported: ["none"],
-    scopes_supported: ["shopify"]
-  });
-});
+// OAuth authorization-server metadata.
+app.get(
+  "/.well-known/oauth-authorization-server",
+  (req, res) => {
+    res.json({
+      issuer: PUBLIC_BASE_URL,
+      authorization_endpoint:
+        `${PUBLIC_BASE_URL}/oauth/authorize`,
+      token_endpoint: `${PUBLIC_BASE_URL}/oauth/token`,
+      registration_endpoint: `${PUBLIC_BASE_URL}/register`,
+      response_types_supported: ["code"],
+      grant_types_supported: ["authorization_code"],
+      code_challenge_methods_supported: ["S256"],
+      token_endpoint_auth_methods_supported: ["none"],
+      scopes_supported: ["shopify"]
+    });
+  }
+);
 
-// MCP protected-resource metadata
+// MCP protected-resource metadata.
 function resourceMetadata() {
   return {
     resource: RESOURCE,
@@ -121,15 +149,21 @@ function resourceMetadata() {
   };
 }
 
-app.get("/.well-known/oauth-protected-resource", (req, res) => {
-  res.json(resourceMetadata());
-});
+app.get(
+  "/.well-known/oauth-protected-resource",
+  (req, res) => {
+    res.json(resourceMetadata());
+  }
+);
 
-app.get("/.well-known/oauth-protected-resource/mcp", (req, res) => {
-  res.json(resourceMetadata());
-});
+app.get(
+  "/.well-known/oauth-protected-resource/mcp",
+  (req, res) => {
+    res.json(resourceMetadata());
+  }
+);
 
-// Dynamic Client Registration (public OAuth clients using PKCE)
+// Dynamic Client Registration.
 app.post("/register", (req, res) => {
   const body = req.body || {};
   const redirectUris = body.redirect_uris;
@@ -144,21 +178,25 @@ app.post("/register", (req, res) => {
   ) {
     return res.status(400).json({
       error: "invalid_redirect_uri",
-      error_description: "Provide valid HTTPS or loopback redirect URIs."
+      error_description:
+        "Provide valid HTTPS or loopback redirect URIs."
     });
   }
 
   const clientId = randomToken();
+  const name = String(
+    body.client_name || "MCP client"
+  ).slice(0, 100);
 
   clients.set(clientId, {
     redirectUris,
-    name: String(body.client_name || "MCP client").slice(0, 100),
+    name,
     created: Date.now()
   });
 
   res.status(201).json({
     client_id: clientId,
-    client_name: String(body.client_name || "MCP client").slice(0, 100),
+    client_name: name,
     redirect_uris: redirectUris,
     grant_types: ["authorization_code"],
     response_types: ["code"],
@@ -166,7 +204,7 @@ app.post("/register", (req, res) => {
   });
 });
 
-// Authorization: show a consent page
+// OAuth authorization consent page.
 app.get("/oauth/authorize", (req, res) => {
   const {
     response_type,
@@ -191,17 +229,21 @@ app.get("/oauth/authorize", (req, res) => {
     code_challenge_method !== "S256" ||
     (resource && resource !== RESOURCE)
   ) {
-    return res.status(400).send("Invalid OAuth authorization request.");
+    return res.status(400).send(
+      "Invalid OAuth authorization request."
+    );
   }
 
   res.type("html").send(`<!doctype html>
 <html>
-<head><meta charset="utf-8"><title>Shopify connection</title></head>
+<head>
+<meta charset="utf-8">
+<title>Shopify connection</title>
+</head>
 <body style="font-family:Arial;max-width:560px;margin:50px auto;padding:20px">
 <h2>Connect Gemini to Shopify</h2>
 <p>You're authorizing an MCP client to access your Shopify store.</p>
-<p>This connection can read or modify store data within your Shopify API permissions.
-Changes to products, prices, inventory and orders may have lasting effects.</p>
+<p>This connection can read or modify store data within your Shopify API permissions. Changes to products, prices, inventory and orders may have lasting effects.</p>
 <form method="POST" action="/oauth/authorize">
 <input type="hidden" name="client_id" value="${htmlEscape(client_id)}">
 <input type="hidden" name="redirect_uri" value="${htmlEscape(redirect_uri)}">
@@ -211,7 +253,8 @@ Changes to products, prices, inventory and orders may have lasting effects.</p>
 <input type="hidden" name="resource" value="${htmlEscape(resource || RESOURCE)}">
 <button type="submit" style="padding:12px 18px">Approve connection</button>
 </form>
-</body></html>`);
+</body>
+</html>`);
 });
 
 app.post("/oauth/authorize", (req, res) => {
@@ -236,7 +279,9 @@ app.post("/oauth/authorize", (req, res) => {
     code_challenge_method !== "S256" ||
     (resource && resource !== RESOURCE)
   ) {
-    return res.status(400).send("Invalid OAuth authorization request.");
+    return res.status(400).send(
+      "Invalid OAuth authorization request."
+    );
   }
 
   const code = randomToken();
@@ -256,7 +301,7 @@ app.post("/oauth/authorize", (req, res) => {
   res.redirect(302, callback.toString());
 });
 
-// Exchange authorization code for an access token
+// Exchange an authorization code for an access token.
 app.post("/oauth/token", (req, res) => {
   res.set("Cache-Control", "no-store");
   res.set("Pragma", "no-cache");
@@ -293,7 +338,10 @@ app.post("/oauth/token", (req, res) => {
     code_verifier.length > 128
   ) {
     if (code) codes.delete(code);
-    return res.status(400).json({ error: "invalid_grant" });
+
+    return res.status(400).json({
+      error: "invalid_grant"
+    });
   }
 
   codes.delete(code);
@@ -304,7 +352,9 @@ app.post("/oauth/token", (req, res) => {
     .digest("base64url");
 
   if (!safeEqual(challenge, record.challenge)) {
-    return res.status(400).json({ error: "invalid_grant" });
+    return res.status(400).json({
+      error: "invalid_grant"
+    });
   }
 
   const accessToken = randomToken();
@@ -326,39 +376,44 @@ app.post("/oauth/token", (req, res) => {
 function authenticate(req, res, next) {
   const header = req.get("authorization") || "";
   const match = header.match(/^Bearer\s+(.+)$/i);
-  const token = match?.[1];
-  const record = token && tokens.get(token);
+  const accessToken = match?.[1];
+  const record = accessToken && tokens.get(accessToken);
 
   if (
     !record ||
     record.expires <= Date.now() ||
     record.resource !== RESOURCE
   ) {
-    if (token) tokens.delete(token);
+    if (accessToken) tokens.delete(accessToken);
 
     res.set(
       "WWW-Authenticate",
       `Bearer resource_metadata="${PUBLIC_BASE_URL}/.well-known/oauth-protected-resource"`
     );
 
-    return res.status(401).json({ error: "unauthorized" });
+    return res.status(401).json({
+      error: "unauthorized"
+    });
   }
 
   next();
 }
 
-// Get a Shopify Admin API access token and execute GraphQL.
-// Shopify's own app configuration and scopes still determine access.
+// Shopify Admin GraphQL API.
 async function shopifyGraphQL(query, variables = {}) {
   if (!SHOPIFY_CLIENT_SECRET) {
-    throw new Error("SHOPIFY_CLIENT_SECRET is missing in Render.");
+    throw new Error(
+      "SHOPIFY_CLIENT_SECRET is missing in Render."
+    );
   }
 
   const authResponse = await fetch(
     `https://${SHOP}/admin/oauth/access_token`,
     {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json"
+      },
       body: JSON.stringify({
         client_id: SHOPIFY_CLIENT_ID,
         client_secret: SHOPIFY_CLIENT_SECRET,
@@ -370,7 +425,11 @@ async function shopifyGraphQL(query, variables = {}) {
   const authData = await authResponse.json();
 
   if (!authResponse.ok || !authData.access_token) {
-    console.error("Shopify authentication failed:", authResponse.status);
+    console.error(
+      "Shopify authentication failed:",
+      authResponse.status
+    );
+
     throw new Error(
       "Shopify authentication failed. Check app setup and Render logs."
     );
@@ -384,14 +443,22 @@ async function shopifyGraphQL(query, variables = {}) {
         "X-Shopify-Access-Token": authData.access_token,
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({ query, variables })
+      body: JSON.stringify({
+        query,
+        variables
+      }),
+      signal: AbortSignal.timeout(60000)
     }
   );
 
   const data = await apiResponse.json();
 
   if (!apiResponse.ok) {
-    console.error("Shopify API returned:", apiResponse.status);
+    console.error(
+      "Shopify API returned:",
+      apiResponse.status
+    );
+
     throw new Error(
       "Shopify API request failed. Check API version, scopes and logs."
     );
@@ -400,55 +467,130 @@ async function shopifyGraphQL(query, variables = {}) {
   return data;
 }
 
-async function browserAgentRequest(path, options = {}) {
+// Forward authenticated requests to the local browser agent.
+async function browserAgentRequest(agentPath, options = {}) {
   const baseUrl = process.env.BROWSER_AGENT_URL;
-  const token = process.env.BROWSER_AGENT_TOKEN;
+  const agentToken = process.env.BROWSER_AGENT_TOKEN;
 
-  if (!baseUrl || !token) {
+  if (!baseUrl || !agentToken) {
     throw new Error(
       "BROWSER_AGENT_URL or BROWSER_AGENT_TOKEN is missing in Render."
     );
   }
 
   const response = await fetch(
-    `${baseUrl.replace(/\/+$/, "")}${path}`,
+    `${baseUrl.replace(/\/+$/, "")}${agentPath}`,
     {
       ...options,
       headers: {
-        Authorization: `Bearer ${token}`,
+        Authorization: `Bearer ${agentToken}`,
         "Content-Type": "application/json",
         ...options.headers
       },
-      signal: AbortSignal.timeout(30000)
+      signal: AbortSignal.timeout(60000)
     }
   );
 
-  const data = await response.json();
+  const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    throw new Error(data.error || `Browser agent returned HTTP ${response.status}`);
+    throw new Error(
+      data.error ||
+      `Browser agent returned HTTP ${response.status}`
+    );
   }
 
   return data;
 }
 
-// MCP endpoint: Streamable HTTP
+function toolResult(data) {
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify(data, null, 2)
+    }]
+  };
+}
+
+function toolError(error) {
+  return {
+    isError: true,
+    content: [{
+      type: "text",
+      text: error.message || "The operation failed."
+    }]
+  };
+}
+
+// Register a browser-agent endpoint as an MCP tool.
+function registerBrowserTool(
+  server,
+  name,
+  description,
+  schema,
+  endpoint,
+  method = "POST"
+) {
+  server.tool(
+    name,
+    description,
+    schema,
+    async args => {
+      try {
+        const options = method === "GET"
+          ? {}
+          : {
+              method,
+              body: JSON.stringify(args || {})
+            };
+
+        const result = await browserAgentRequest(
+          endpoint,
+          options
+        );
+
+        return toolResult(result);
+      } catch (error) {
+        return toolError(error);
+      }
+    }
+  );
+}
+
+// Reusable target schema for browser elements.
+const targetSchema = {
+  selector: z.string().optional(),
+  role: z.string().optional(),
+  label: z.string().optional(),
+  placeholder: z.string().optional(),
+  text: z.string().optional(),
+  testId: z.string().optional(),
+  name: z.string().optional(),
+  exact: z.boolean().optional(),
+  index: z.number().int().nonnegative().optional()
+};
+
+// MCP endpoint: Streamable HTTP.
 app.post("/mcp", authenticate, async (req, res) => {
   const server = new McpServer({
     name: "onyx-oak-shopify",
-    version: "1.3.0"
+    version: "2.0.0"
   });
 
+  // Existing GraphQL tool.
   server.tool(
     "shopify_graphql",
-    "Execute Shopify Admin GraphQL queries or mutations. Can read and modify store data permitted by the Shopify app's granted API scopes. Mutations may have lasting effects.",
+    "Execute Shopify Admin GraphQL queries or mutations. Access is limited by the Shopify app's granted API scopes. Mutations may have lasting effects.",
     {
       query: z.string().min(1).max(20000),
       variables: z.record(z.string(), z.unknown()).optional()
     },
     async ({ query, variables }) => {
       try {
-        const result = await shopifyGraphQL(query, variables || {});
+        const result = await shopifyGraphQL(
+          query,
+          variables || {}
+        );
 
         return {
           content: [{
@@ -458,21 +600,143 @@ app.post("/mcp", authenticate, async (req, res) => {
           ...(result.errors ? { isError: true } : {})
         };
       } catch (error) {
-        return {
-          isError: true,
-          content: [{
-            type: "text",
-            text: error.message || "Shopify request failed."
-          }]
-        };
+        return toolError(error);
       }
     }
   );
 
-  
+  // General Shopify Admin browser tools.
+
+  registerBrowserTool(
+    server,
+    "shopify_browser_status",
+    "Check whether the local Shopify browser agent is reachable.",
+    {},
+    "/health",
+    "GET"
+  );
+
+  registerBrowserTool(
+    server,
+    "shopify_browser_navigate",
+    "Navigate the currently selected Opera tab to a Shopify Admin URL. Use only trusted Shopify Admin URLs. Inspect the page after navigation.",
+    {
+      url: z.string().min(1).max(2048)
+    },
+    "/navigate"
+  );
+
+  registerBrowserTool(
+    server,
+    "shopify_browser_inspect",
+    "Inspect the current Shopify Admin page. Returns URL, title, page text, visible buttons, links, and form controls. Inspect before interacting.",
+    {},
+    "/inspect"
+  );
+
+  registerBrowserTool(
+    server,
+    "shopify_browser_click",
+    "Click one visible element on Shopify Admin. Provide exactly one locator strategy: selector, role, label, placeholder, text, or testId. For role targets, name may also be supplied. Use inspect first and verify the result afterward.",
+    targetSchema,
+    "/click"
+  );
+
+  registerBrowserTool(
+    server,
+    "shopify_browser_fill",
+    "Fill a Shopify Admin text field. Provide exactly one element locator strategy and the value. Verify the field afterward. Do not submit consequential changes without appropriate confirmation.",
+    {
+      ...targetSchema,
+      value: z.string().max(100000)
+    },
+    "/fill"
+  );
+
+  registerBrowserTool(
+    server,
+    "shopify_browser_select",
+    "Select an option in a native Shopify Admin dropdown. Provide exactly one element locator strategy and an option containing one of value, label, or index.",
+    {
+      ...targetSchema,
+      option: z.object({
+        value: z.string().optional(),
+        label: z.string().optional(),
+        index: z.number().int().nonnegative().optional()
+      }).refine(option =>
+        ["value", "label", "index"].filter(
+          key => option[key] !== undefined
+        ).length === 1
+      )
+    },
+    "/select"
+  );
+
+  registerBrowserTool(
+    server,
+    "shopify_browser_check",
+    "Check or uncheck a Shopify Admin checkbox. Supply exactly one element locator strategy. The checked field defaults to true.",
+    {
+      ...targetSchema,
+      checked: z.boolean().optional()
+    },
+    "/check"
+  );
+
+  registerBrowserTool(
+    server,
+    "shopify_browser_press",
+    "Press a keyboard key on a Shopify Admin element, such as Enter, Tab, Escape, or Control+A. Supply exactly one element locator strategy and the key.",
+    {
+      ...targetSchema,
+      key: z.string().min(1).max(50)
+    },
+    "/press"
+  );
+
+  registerBrowserTool(
+    server,
+    "shopify_browser_scroll",
+    "Scroll the current Shopify Admin page by deltaY, or scroll a specified element into view. Positive deltaY scrolls down; negative scrolls up.",
+    {
+      deltaY: z.number().min(-10000).max(10000).optional(),
+      selector: z.string().optional(),
+      index: z.number().int().nonnegative().optional()
+    },
+    "/scroll"
+  );
+
+  registerBrowserTool(
+    server,
+    "shopify_browser_wait",
+    "Wait for a Shopify Admin element to become visible, hidden, attached, or detached. Supply exactly one locator strategy.",
+    {
+      ...targetSchema,
+      state: z.enum([
+        "visible",
+        "hidden",
+        "attached",
+        "detached"
+      ]).optional()
+    },
+    "/wait"
+  );
+
+  registerBrowserTool(
+    server,
+    "shopify_browser_screenshot",
+    "Capture a screenshot of the current Shopify Admin page. Returns PNG data encoded as base64. Use fullPage=true to capture the full page.",
+    {
+      fullPage: z.boolean().optional()
+    },
+    "/screenshot"
+  );
+
+  // Existing email-template tools remain available.
+
   server.tool(
     "get_shopify_email_template",
-    "Read a Shopify notification email template from its open Edit code page in Opera. Supply the template slug from the Shopify editor URL.",
+    "Read a Shopify notification email template from its open Edit code page in Opera. Supply the template slug from the editor URL.",
     {
       template: z.string()
         .regex(/^[a-z0-9_]+$/)
@@ -484,109 +748,76 @@ app.post("/mcp", authenticate, async (req, res) => {
           `/template?template=${encodeURIComponent(template)}`
         );
 
-        return {
-          content: [{
-            type: "text",
-            text: JSON.stringify(result, null, 2)
-          }]
-        };
+        return toolResult(result);
       } catch (error) {
-        return {
-          isError: true,
-          content: [{
-            type: "text",
-            text: error.message || "Could not read the email template."
-          }]
-        };
+        return toolError(error);
       }
     }
   );
 
   server.tool(
     "edit_shopify_email_template",
-    "Replace the code in an open Shopify notification email editor. Requires the template slug from its URL and the complete replacement code. Does not save changes to Shopify.",
+    "Replace the code in an open Shopify notification email editor. Supply the template slug and complete replacement code. The browser agent attempts to save and verify the change.",
     {
       template: z.string().regex(/^[a-z0-9_]+$/),
       code: z.string().min(1).max(100000)
     },
     async ({ template, code }) => {
       try {
-        const result = await browserAgentRequest("/template", {
-          method: "PUT",
-          body: JSON.stringify({ template, code })
-        });
+        const result = await browserAgentRequest(
+          "/template",
+          {
+            method: "PUT",
+            body: JSON.stringify({
+              template,
+              code
+            })
+          }
+        );
 
-        return {
-          content: [{
-            type: "text",
-            text: JSON.stringify(result, null, 2)
-          }]
-        };
+        return toolResult(result);
       } catch (error) {
-        return {
-          isError: true,
-          content: [{
-            type: "text",
-            text: error.message || "Could not edit the email template."
-          }]
-        };
+        return toolError(error);
       }
     }
   );
 
-  // Backwards-compatible tool for your existing workflow.
   server.tool(
     "get_return_declined_template",
-    "Read the Return request declined email template.",
+    "Read the Return request declined email template from its open editor.",
     {},
     async () => {
       try {
-        const result = await browserAgentRequest("/template");
-        return {
-          content: [{
-            type: "text",
-            text: JSON.stringify(result, null, 2)
-          }]
-        };
+        const result = await browserAgentRequest(
+          "/template"
+        );
+
+        return toolResult(result);
       } catch (error) {
-        return {
-          isError: true,
-          content: [{
-            type: "text",
-            text: error.message || "Could not read the email template."
-          }]
-        };
+        return toolError(error);
       }
     }
   );
 
   server.tool(
     "edit_return_declined_template",
-    "Replace the Return request declined template code. Does not save changes to Shopify.",
+    "Replace the Return request declined template code. Supply the complete replacement code. The browser agent attempts to save and verify the change.",
     {
       code: z.string().min(1).max(100000)
     },
     async ({ code }) => {
       try {
-        const result = await browserAgentRequest("/template", {
-          method: "PUT",
-          body: JSON.stringify({ code })
-        });
+        const result = await browserAgentRequest(
+          "/template",
+          {
+            method: "PUT",
+            body: JSON.stringify({ code })
+          }
+        );
 
-        return {
-          content: [{
-            type: "text",
-            text: JSON.stringify(result, null, 2)
-          }]
-        };
+        return toolResult(result);
       } catch (error) {
-        return {
-          isError: true,
-          content: [{
-            type: "text",
-            text: error.message || "Could not edit the email template."
-          }]
-        };
+        return toolError(error);
       }
     }
   );
@@ -599,10 +830,15 @@ app.post("/mcp", authenticate, async (req, res) => {
     await server.connect(transport);
     await transport.handleRequest(req, res, req.body);
   } catch (error) {
-    console.error("MCP request failed:", error.message);
+    console.error(
+      "MCP request failed:",
+      error.message
+    );
 
     if (!res.headersSent) {
-      res.status(500).json({ error: "MCP request failed." });
+      res.status(500).json({
+        error: "MCP request failed."
+      });
     }
   } finally {
     try {
@@ -615,12 +851,12 @@ app.post("/mcp", authenticate, async (req, res) => {
   }
 });
 
-
 app.head("/mcp", (req, res) => {
   res.set(
     "WWW-Authenticate",
     `Bearer resource_metadata="${PUBLIC_BASE_URL}/.well-known/oauth-protected-resource/mcp"`
   );
+
   res.status(401).end();
 });
 
@@ -629,13 +865,16 @@ app.get("/mcp", (req, res) => {
   res.status(405).send("Use POST for MCP requests.");
 });
 
-
 app.get("/", (req, res) => {
-  res.type("text").send("Onyx & Oak Shopify MCP server is running.");
+  res.type("text").send(
+    "Onyx & Oak Shopify MCP server is running."
+  );
 });
 
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, "0.0.0.0", () => {
-  console.log("Onyx & Oak Shopify MCP server started.");
+  console.log(
+    "Onyx & Oak Shopify MCP server started."
+  );
 });
