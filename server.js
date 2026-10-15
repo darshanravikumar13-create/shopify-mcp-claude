@@ -1,4 +1,3 @@
-
 const express = require("express");
 const cors = require("cors");
 const crypto = require("crypto");
@@ -120,7 +119,6 @@ function getClientCredentials(req) {
   };
 }
 
-// OAuth authorization-server metadata.
 app.get(
   "/.well-known/oauth-authorization-server",
   (req, res) => {
@@ -139,7 +137,6 @@ app.get(
   }
 );
 
-// MCP protected-resource metadata.
 function resourceMetadata() {
   return {
     resource: RESOURCE,
@@ -163,7 +160,6 @@ app.get(
   }
 );
 
-// Dynamic Client Registration.
 app.post("/register", (req, res) => {
   const body = req.body || {};
   const redirectUris = body.redirect_uris;
@@ -204,7 +200,6 @@ app.post("/register", (req, res) => {
   });
 });
 
-// OAuth authorization consent page.
 app.get("/oauth/authorize", (req, res) => {
   const {
     response_type,
@@ -301,7 +296,6 @@ app.post("/oauth/authorize", (req, res) => {
   res.redirect(302, callback.toString());
 });
 
-// Exchange an authorization code for an access token.
 app.post("/oauth/token", (req, res) => {
   res.set("Cache-Control", "no-store");
   res.set("Pragma", "no-cache");
@@ -399,7 +393,6 @@ function authenticate(req, res, next) {
   next();
 }
 
-// Shopify Admin GraphQL API.
 async function shopifyGraphQL(query, variables = {}) {
   if (!SHOPIFY_CLIENT_SECRET) {
     throw new Error(
@@ -467,7 +460,6 @@ async function shopifyGraphQL(query, variables = {}) {
   return data;
 }
 
-// Forward authenticated requests to the local browser agent.
 async function browserAgentRequest(agentPath, options = {}) {
   const baseUrl = process.env.BROWSER_AGENT_URL;
   const agentToken = process.env.BROWSER_AGENT_TOKEN;
@@ -478,16 +470,21 @@ async function browserAgentRequest(agentPath, options = {}) {
     );
   }
 
+  const {
+    timeoutMs = 60000,
+    ...fetchOptions
+  } = options;
+
   const response = await fetch(
     `${baseUrl.replace(/\/+$/, "")}${agentPath}`,
     {
-      ...options,
+      ...fetchOptions,
       headers: {
         Authorization: `Bearer ${agentToken}`,
         "Content-Type": "application/json",
-        ...options.headers
+        ...fetchOptions.headers
       },
-      signal: AbortSignal.timeout(60000)
+      signal: AbortSignal.timeout(timeoutMs)
     }
   );
 
@@ -522,7 +519,6 @@ function toolError(error) {
   };
 }
 
-// Register a browser-agent endpoint as an MCP tool.
 function registerBrowserTool(
   server,
   name,
@@ -557,7 +553,6 @@ function registerBrowserTool(
   );
 }
 
-// Reusable target schema for browser elements.
 const targetSchema = {
   selector: z.string().optional(),
   role: z.string().optional(),
@@ -570,14 +565,152 @@ const targetSchema = {
   index: z.number().int().nonnegative().optional()
 };
 
-// MCP endpoint: Streamable HTTP.
+const workflowTargetSchema = z.object({
+  selector: z.string().optional(),
+  role: z.string().optional(),
+  label: z.string().optional(),
+  placeholder: z.string().optional(),
+  text: z.string().optional(),
+  testId: z.string().optional(),
+  name: z.string().optional(),
+  exact: z.boolean().optional(),
+  index: z.number().int().nonnegative().optional()
+}).optional();
+
+const workflowStepSchema = z.discriminatedUnion("action", [
+  z.object({
+    action: z.literal("navigate"),
+    url: z.string().min(1).max(2048)
+  }),
+
+  z.object({
+    action: z.literal("inspect")
+  }),
+
+  z.object({
+    action: z.literal("click"),
+    target: workflowTargetSchema,
+    selector: z.string().optional(),
+    role: z.string().optional(),
+    label: z.string().optional(),
+    placeholder: z.string().optional(),
+    text: z.string().optional(),
+    testId: z.string().optional(),
+    name: z.string().optional(),
+    exact: z.boolean().optional(),
+    index: z.number().int().nonnegative().optional(),
+    timeoutMs: z.number().int().min(1000).max(60000).optional()
+  }),
+
+  z.object({
+    action: z.literal("fill"),
+    target: workflowTargetSchema,
+    selector: z.string().optional(),
+    role: z.string().optional(),
+    label: z.string().optional(),
+    placeholder: z.string().optional(),
+    text: z.string().optional(),
+    testId: z.string().optional(),
+    name: z.string().optional(),
+    exact: z.boolean().optional(),
+    index: z.number().int().nonnegative().optional(),
+    value: z.string().max(100000),
+    timeoutMs: z.number().int().min(1000).max(60000).optional()
+  }),
+
+  z.object({
+    action: z.literal("select"),
+    target: workflowTargetSchema,
+    selector: z.string().optional(),
+    role: z.string().optional(),
+    label: z.string().optional(),
+    placeholder: z.string().optional(),
+    text: z.string().optional(),
+    testId: z.string().optional(),
+    name: z.string().optional(),
+    exact: z.boolean().optional(),
+    index: z.number().int().nonnegative().optional(),
+    option: z.object({
+      value: z.string().optional(),
+      label: z.string().optional(),
+      index: z.number().int().nonnegative().optional()
+    }),
+    timeoutMs: z.number().int().min(1000).max(60000).optional()
+  }),
+
+  z.object({
+    action: z.literal("check"),
+    target: workflowTargetSchema,
+    selector: z.string().optional(),
+    role: z.string().optional(),
+    label: z.string().optional(),
+    placeholder: z.string().optional(),
+    text: z.string().optional(),
+    testId: z.string().optional(),
+    name: z.string().optional(),
+    exact: z.boolean().optional(),
+    index: z.number().int().nonnegative().optional(),
+    checked: z.boolean().optional(),
+    timeoutMs: z.number().int().min(1000).max(60000).optional()
+  }),
+
+  z.object({
+    action: z.literal("press"),
+    target: workflowTargetSchema,
+    selector: z.string().optional(),
+    role: z.string().optional(),
+    label: z.string().optional(),
+    placeholder: z.string().optional(),
+    text: z.string().optional(),
+    testId: z.string().optional(),
+    name: z.string().optional(),
+    exact: z.boolean().optional(),
+    index: z.number().int().nonnegative().optional(),
+    key: z.string().min(1).max(50),
+    timeoutMs: z.number().int().min(1000).max(60000).optional()
+  }),
+
+  z.object({
+    action: z.literal("scroll"),
+    target: workflowTargetSchema,
+    selector: z.string().optional(),
+    index: z.number().int().nonnegative().optional(),
+    deltaY: z.number().min(-10000).max(10000).optional()
+  }),
+
+  z.object({
+    action: z.literal("wait"),
+    target: workflowTargetSchema,
+    selector: z.string().optional(),
+    role: z.string().optional(),
+    label: z.string().optional(),
+    placeholder: z.string().optional(),
+    text: z.string().optional(),
+    testId: z.string().optional(),
+    name: z.string().optional(),
+    exact: z.boolean().optional(),
+    index: z.number().int().nonnegative().optional(),
+    state: z.enum([
+      "visible",
+      "hidden",
+      "attached",
+      "detached"
+    ]).optional(),
+    timeoutMs: z.number().int().min(1000).max(60000).optional()
+  }),
+
+  z.object({
+    action: z.literal("screenshot"),
+    fullPage: z.boolean().optional()
+  })
+]);
+
 app.post("/mcp", authenticate, async (req, res) => {
   const server = new McpServer({
     name: "onyx-oak-shopify",
-    version: "2.0.0"
+    version: "2.1.0"
   });
 
-  // Existing GraphQL tool.
   server.tool(
     "shopify_graphql",
     "Execute Shopify Admin GraphQL queries or mutations. Access is limited by the Shopify app's granted API scopes. Mutations may have lasting effects.",
@@ -605,8 +738,6 @@ app.post("/mcp", authenticate, async (req, res) => {
     }
   );
 
-  // General Shopify Admin browser tools.
-
   registerBrowserTool(
     server,
     "shopify_browser_status",
@@ -619,7 +750,7 @@ app.post("/mcp", authenticate, async (req, res) => {
   registerBrowserTool(
     server,
     "shopify_browser_navigate",
-    "Navigate the currently selected Opera tab to a Shopify Admin URL. Use only trusted Shopify Admin URLs. Inspect the page after navigation.",
+    "Navigate the selected Opera tab to a trusted Shopify Admin URL.",
     {
       url: z.string().min(1).max(2048)
     },
@@ -629,7 +760,7 @@ app.post("/mcp", authenticate, async (req, res) => {
   registerBrowserTool(
     server,
     "shopify_browser_inspect",
-    "Inspect the current Shopify Admin page. Returns URL, title, page text, visible buttons, links, and form controls. Inspect before interacting.",
+    "Inspect the current Shopify Admin page. Returns URL, title, page text, visible buttons, links and form controls.",
     {},
     "/inspect"
   );
@@ -637,7 +768,7 @@ app.post("/mcp", authenticate, async (req, res) => {
   registerBrowserTool(
     server,
     "shopify_browser_click",
-    "Click one visible element on Shopify Admin. Provide exactly one locator strategy: selector, role, label, placeholder, text, or testId. For role targets, name may also be supplied. Use inspect first and verify the result afterward.",
+    "Click one Shopify Admin element. Provide exactly one locator strategy. Inspect before clicking and verify afterward.",
     targetSchema,
     "/click"
   );
@@ -645,7 +776,7 @@ app.post("/mcp", authenticate, async (req, res) => {
   registerBrowserTool(
     server,
     "shopify_browser_fill",
-    "Fill a Shopify Admin text field. Provide exactly one element locator strategy and the value. Verify the field afterward. Do not submit consequential changes without appropriate confirmation.",
+    "Fill a Shopify Admin field. Inspect before editing. Do not submit consequential changes without appropriate confirmation.",
     {
       ...targetSchema,
       value: z.string().max(100000)
@@ -656,7 +787,7 @@ app.post("/mcp", authenticate, async (req, res) => {
   registerBrowserTool(
     server,
     "shopify_browser_select",
-    "Select an option in a native Shopify Admin dropdown. Provide exactly one element locator strategy and an option containing one of value, label, or index.",
+    "Select an option in a native Shopify Admin dropdown.",
     {
       ...targetSchema,
       option: z.object({
@@ -675,7 +806,7 @@ app.post("/mcp", authenticate, async (req, res) => {
   registerBrowserTool(
     server,
     "shopify_browser_check",
-    "Check or uncheck a Shopify Admin checkbox. Supply exactly one element locator strategy. The checked field defaults to true.",
+    "Check or uncheck a Shopify Admin checkbox.",
     {
       ...targetSchema,
       checked: z.boolean().optional()
@@ -686,7 +817,7 @@ app.post("/mcp", authenticate, async (req, res) => {
   registerBrowserTool(
     server,
     "shopify_browser_press",
-    "Press a keyboard key on a Shopify Admin element, such as Enter, Tab, Escape, or Control+A. Supply exactly one element locator strategy and the key.",
+    "Press a keyboard key on a Shopify Admin element.",
     {
       ...targetSchema,
       key: z.string().min(1).max(50)
@@ -697,7 +828,7 @@ app.post("/mcp", authenticate, async (req, res) => {
   registerBrowserTool(
     server,
     "shopify_browser_scroll",
-    "Scroll the current Shopify Admin page by deltaY, or scroll a specified element into view. Positive deltaY scrolls down; negative scrolls up.",
+    "Scroll the current Shopify Admin page or scroll an element into view.",
     {
       deltaY: z.number().min(-10000).max(10000).optional(),
       selector: z.string().optional(),
@@ -709,7 +840,7 @@ app.post("/mcp", authenticate, async (req, res) => {
   registerBrowserTool(
     server,
     "shopify_browser_wait",
-    "Wait for a Shopify Admin element to become visible, hidden, attached, or detached. Supply exactly one locator strategy.",
+    "Wait for a Shopify Admin element to become visible, hidden, attached or detached.",
     {
       ...targetSchema,
       state: z.enum([
@@ -725,18 +856,47 @@ app.post("/mcp", authenticate, async (req, res) => {
   registerBrowserTool(
     server,
     "shopify_browser_screenshot",
-    "Capture a screenshot of the current Shopify Admin page. Returns PNG data encoded as base64. Use fullPage=true to capture the full page.",
+    "Capture a screenshot of the current Shopify Admin page as base64 PNG.",
     {
       fullPage: z.boolean().optional()
     },
     "/screenshot"
   );
 
-  // Existing email-template tools remain available.
+  // New tool: execute multiple browser actions in one MCP call.
+  server.tool(
+    "shopify_browser_workflow",
+    "Execute 1 to 12 Shopify Admin browser actions sequentially in one MCP call. Supported actions: navigate, inspect, click, fill, select, check, press, scroll, wait, screenshot. Stops at the first failed step and returns results completed so far. Inspect before editing. No automatic saving is performed by the workflow itself; save only when explicitly requested.",
+    {
+      steps: z.array(workflowStepSchema).min(1).max(12)
+    },
+    async ({ steps }) => {
+      try {
+        const result = await browserAgentRequest(
+          "/workflow",
+          {
+            method: "POST",
+            body: JSON.stringify({ steps }),
+            timeoutMs: 120000
+          }
+        );
+
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify(result, null, 2)
+          }],
+          ...(result.ok === false ? { isError: true } : {})
+        };
+      } catch (error) {
+        return toolError(error);
+      }
+    }
+  );
 
   server.tool(
     "get_shopify_email_template",
-    "Read a Shopify notification email template from its open Edit code page in Opera. Supply the template slug from the editor URL.",
+    "Read a Shopify notification email template from its open Edit code page in Opera.",
     {
       template: z.string()
         .regex(/^[a-z0-9_]+$/)
@@ -788,10 +948,7 @@ app.post("/mcp", authenticate, async (req, res) => {
     {},
     async () => {
       try {
-        const result = await browserAgentRequest(
-          "/template"
-        );
-
+        const result = await browserAgentRequest("/template");
         return toolResult(result);
       } catch (error) {
         return toolError(error);
